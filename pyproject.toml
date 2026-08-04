@@ -24,6 +24,9 @@ classifiers = [
 keywords = ["jsonl", "ndjson", "append-only", "event-log", "ulid", "audit-log"]
 dependencies = [
     "python-ulid>=2.0.0",
+    # python-ulid 4.x imports `override` with a `typing_extensions` fallback on
+    # Python < 3.12 but doesn't declare the dep itself; supply it ourselves.
+    "typing-extensions>=4.0; python_version < '3.12'",
 ]
 
 [project.optional-dependencies]
