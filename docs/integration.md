@@ -13,7 +13,7 @@ literal before/after for each one.
 ## Install
 
 ```bash
-pip install "jsonl-log @ git+https://github.com/ecoop/jsonl-log@v0.1.0"
+pip install jsonl-log
 ```
 
 One runtime dependency (`python-ulid`). No optional extras — the whole surface
@@ -180,7 +180,7 @@ adoption** unless it grows a genuine append-only JSONL log later.
 
 ## Adoption checklist
 
-- [ ] `pip install "jsonl-log @ git+…@v0.1.0"`, add to the consuming repo's deps
+- [ ] `pip install jsonl-log`, add to the consuming repo's deps
 - [ ] Replace the local `_utc_now_iso` / `new_id` helpers with `utc_now_iso` / `new_ulid`
 - [ ] Swap the append tail for `append_jsonl(...)` or `JsonlLog.append(...)`
 - [ ] Swap `read_latest_*` walks for `read_latest` / `read_latest_list`

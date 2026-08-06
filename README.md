@@ -9,14 +9,14 @@ pitchcraft's persistence ledgers (`da_notes_log`, `decisions_ledger`,
 `downstream_constraints`) and rulebook's `interaction_log`. The source flagged
 its own duplication — this package is the consolidation.
 
-_Last updated: 2026-08-04_
+_Last updated: 2026-08-06_
 
 ---
 
 ## Install
 
 ```bash
-pip install "jsonl-log @ git+https://github.com/ecoop/jsonl-log@v0.1.0"
+pip install jsonl-log
 ```
 
 One runtime dependency: [`python-ulid`](https://pypi.org/project/python-ulid/).
