@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jsonl-log"
-version = "0.1.0"
+version = "0.1.1"
 description = "Append-only JSONL event log with ULID + UTC-ISO stamping and last-row-wins reads."
 readme = "README.md"
 license = { file = "LICENSE" }
