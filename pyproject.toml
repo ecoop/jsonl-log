@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "jsonl-log"
-version = "0.1.1"
+version = "0.2.0"
 description = "Append-only JSONL event log with ULID + UTC-ISO stamping and last-row-wins reads."
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -30,6 +30,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# GCS durable-backend extra. Base install stays lean; consumers who want
+# the GcsBackend opt in via `pip install jsonl-log[gcs]`. Floor-only, no
+# upper cap — the compose semantics used here are stable across the 2.x
+# and 3.x lines.
+gcs = [
+    "google-cloud-storage>=2.10",
+]
 # Development / test extras.
 dev = [
     "pytest>=8.0",
