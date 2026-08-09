@@ -16,10 +16,14 @@ the free functions with an explicit path.
 
 from __future__ import annotations
 
+from .backends import DurableBackend, DurableBackendError, GcsBackend
 from .log import JsonlLog, append_jsonl, read_all, read_latest, read_latest_list
 from .stamps import new_ulid, utc_now_iso
 
 __all__ = [
+    "DurableBackend",
+    "DurableBackendError",
+    "GcsBackend",
     "JsonlLog",
     "append_jsonl",
     "new_ulid",
@@ -29,4 +33,5 @@ __all__ = [
     "utc_now_iso",
 ]
 
-__version__ = "0.1.0"
+# In-flight v0.2 work; the release-cutting PR bumps this to a clean "0.2.0".
+__version__ = "0.2.0.dev0"
