@@ -33,5 +33,4 @@ __all__ = [
     "utc_now_iso",
 ]
 
-# In-flight v0.2 work; the release-cutting PR bumps this to a clean "0.2.0".
-__version__ = "0.2.0.dev0"
+__version__ = "0.2.0"

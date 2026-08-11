@@ -9,7 +9,7 @@ pitchcraft's persistence ledgers (`da_notes_log`, `decisions_ledger`,
 `downstream_constraints`) and rulebook's `interaction_log`. The source flagged
 its own duplication — this package is the consolidation.
 
-_Last updated: 2026-08-06_
+_Last updated: 2026-08-08_
 
 ---
 
@@ -107,6 +107,75 @@ A **multi-worker** deployment needs OS-level file locking (`fcntl.flock`) or a
 dedicated append service — out of scope here. The free functions accept a
 `lock=` you own; `JsonlLog` instances each hold their own lock unless you pass a
 shared one.
+
+---
+
+## Durable backends (v0.2)
+
+For deployments where the local filesystem is ephemeral (Cloud Run, ECS, any
+container that restarts to a fresh disk), `JsonlLog` can mirror each append to
+an object-store backend and hydrate local state back on startup. **Reads stay
+local-only** — no network round-trip per read.
+
+```bash
+pip install jsonl-log[gcs]   # adds google-cloud-storage
+```
+
+```python
+from jsonl_log import JsonlLog, GcsBackend
+
+log = JsonlLog(
+    "data/feedback.jsonl",
+    durable_backend=GcsBackend("rulebook-state", prefix="logs/"),
+    strict=False,          # log-and-continue on backend failure (see below)
+)
+log.hydrate()              # pull latest state from GCS at startup
+log.append({"qa_id": "q1", "rating": 5})   # writes local AND GCS
+rows = log.read_latest_list(key="qa_id", sort_desc="timestamp")
+```
+
+### Three operating modes
+
+- **No backend** (`durable_backend=None`) — v0.1 behavior byte-for-byte. Local
+  append, local reads, no cloud path.
+- **Backend, reachable** — every append writes local first, then mirrors to
+  the backend under the same lock. `hydrate()` at startup pulls the backend's
+  view down into the local file, overwriting any diverged local content.
+- **Backend, unreachable at startup** — `hydrate()` will raise from the
+  backend call; the container should either fail fast or catch and continue
+  local-only. Subsequent appends retry the backend on every call.
+
+### `strict` and the silent-gap caveat
+
+By default (`strict=False`) a backend append failure is logged as a warning
+and the row remains on local disk only. On the next container restart,
+`hydrate()` pulls the backend-authoritative state and that missed row
+**disappears** from the container's view. This is intentional for HITL signal
+(thumbs, curation clicks) — losing one row on a GCS outage is preferable to
+failing the user's request. For audit-critical logs, pass `strict=True` and
+handle `DurableBackendError` yourself.
+
+### Adopting on a pre-existing log
+
+If you already have a local jsonl file and are enabling durability for the
+first time, call `log.bootstrap()` once at startup **before any appends** to
+push the existing rows up to the backend. Idempotent — a no-op once the
+backend has content.
+
+### Single-writer assumption
+
+v0.2 assumes **one writer per (bucket, prefix, name) tuple**. Match your
+deployment shape (e.g. Cloud Run `--max-instances=1 --min-instances=0`).
+Multi-writer correctness is on the v0.3 roadmap; see the v0.2 design notes
+in `docs/v0.2-plan.md` for the candidates.
+
+### Custom backends
+
+`DurableBackend` is a runtime-checkable Protocol — any class with
+`read_all(name) -> str | None` and `append(name, line) -> None` satisfies
+it. Consumers who want Firestore, S3, or an in-memory test backend
+implement two methods and pass the instance to `JsonlLog(...,
+durable_backend=...)`.
 
 ---
 

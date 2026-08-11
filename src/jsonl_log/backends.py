@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
+from .stamps import new_ulid
+
 
 class DurableBackendError(RuntimeError):
     """Raised when a durable backend operation fails.
@@ -73,16 +75,32 @@ class DurableBackend(Protocol):
         ...
 
 
+_NDJSON_CONTENT_TYPE = "application/x-ndjson"
+
+
 class GcsBackend:
     """Store a jsonl log as one GCS object per name, appended via GCS compose.
 
-    Stub in this PR — methods raise :class:`NotImplementedError`. The
-    compose+consolidate body lands in a follow-up PR alongside the
-    ``google-cloud-storage`` optional dependency and integration tests.
+    Each :meth:`append` uploads the new line to a per-append temp object and
+    then composes ``[target, temp] → target`` server-side, so the target
+    grows by one row without ever downloading its current contents.
+    True O(1) per append against the network, matching the local jsonl
+    contract.
 
-    The constructor is finalised now so wiring code (``JsonlLog(...,
-    durable_backend=GcsBackend(...))``) can compile against the intended
-    public shape.
+    Every ``consolidate_every`` appends against a single target (counted
+    per-process — the counter resets on restart), the target is rewritten
+    as a fresh flat blob. This resets its ``componentCount`` so the object
+    stays well clear of GCS's per-object component cap. Consolidation is
+    an amortized O(N) event on the write path; the default keeps it rare.
+
+    ``google-cloud-storage`` is imported lazily on first use — importing
+    this module never requires the library. Install with
+    ``pip install jsonl-log[gcs]`` to get the dependency.
+
+    Single-writer per (bucket, prefix, name) tuple is assumed. Concurrent
+    writers can race the ``target.exists()`` check on the first append and
+    can interleave temp-object composes; see ``docs/v0.2-plan.md`` for the
+    v0.3 candidates that fix this.
     """
 
     def __init__(
@@ -120,14 +138,59 @@ class GcsBackend:
             self._client = storage.Client()
         return self._client.bucket(self._bucket_name)
 
+    def _object_name(self, name: str) -> str:
+        return f"{self._prefix}{name}"
+
     def read_all(self, name: str) -> str | None:
-        raise NotImplementedError(
-            "GcsBackend.read_all is a v0.2 stub; the compose/consolidate "
-            "body lands in the next PR. See docs/v0.2-plan.md."
-        )
+        """Return the full contents of the composed target object, or None if absent."""
+        blob = self._bucket().blob(self._object_name(name))
+        if not blob.exists():
+            return None
+        return blob.download_as_text()
 
     def append(self, name: str, line: str) -> None:
-        raise NotImplementedError(
-            "GcsBackend.append is a v0.2 stub; the compose/consolidate "
-            "body lands in the next PR. See docs/v0.2-plan.md."
-        )
+        """Append ``line`` to the target object via GCS compose.
+
+        First-time write: uploads ``line`` directly to the target — no
+        compose needed. Subsequent writes: upload to a temp object,
+        compose ``[target, temp] → target``, delete temp. Every
+        ``consolidate_every`` appends, rewrite the target as a fresh flat
+        blob to reset its component count.
+        """
+        target_name = self._object_name(name)
+        bucket = self._bucket()
+        target = bucket.blob(target_name)
+
+        if not target.exists():
+            # First append for this name in this bucket — no target to
+            # compose onto. Upload the line directly and count it as one
+            # component; consolidation will still trigger later.
+            target.upload_from_string(line, content_type=_NDJSON_CONTENT_TYPE)
+        else:
+            # Compose path: upload the new line to a per-append temp object,
+            # server-side-concat [target, temp] into target, then clean up
+            # the temp. Temp names include a ULID so concurrent appends on
+            # the same target don't collide on temp keys.
+            temp_name = f"{target_name}.tmp.{new_ulid()}"
+            temp = bucket.blob(temp_name)
+            temp.upload_from_string(line, content_type=_NDJSON_CONTENT_TYPE)
+            target.compose([target, temp])
+            temp.delete()
+
+        count = self._append_counts.get(target_name, 0) + 1
+        if count >= self._consolidate_every:
+            self._consolidate(target)
+            count = 0
+        self._append_counts[target_name] = count
+
+    def _consolidate(self, target) -> None:
+        """Rewrite ``target`` as a fresh flat blob to reset its componentCount.
+
+        Download-then-upload keeps the semantics obvious and portable across
+        google-cloud-storage versions. It is O(N) in the target's current
+        size — a periodic latency spike on the write path, not a per-row
+        cost. Called from :meth:`append` when the per-process counter hits
+        ``consolidate_every``.
+        """
+        content = target.download_as_text()
+        target.upload_from_string(content, content_type=_NDJSON_CONTENT_TYPE)
