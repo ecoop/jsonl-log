@@ -209,8 +209,9 @@ class JsonlLog:
         mirrored to the backend under the same lock as the local write. Local
         write always happens first; if the backend call fails and
         ``strict=False`` (default) the failure is logged and this method
-        returns normally, with the row present on local disk but absent from
-        the backend until a future append triggers backend consolidation.
+        returns normally, with the row present on local disk but permanently
+        absent from the backend — nothing back-fills it, so a later
+        :meth:`hydrate` drops it. See the README's silent-gap caveat.
         With ``strict=True`` the failure raises :class:`DurableBackendError`;
         the local write has already committed and is not rolled back.
         """
