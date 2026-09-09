@@ -1,15 +1,24 @@
 # jsonl-log
 
+[![PyPI](https://img.shields.io/pypi/v/jsonl-log.svg)](https://pypi.org/project/jsonl-log/)
+[![Python](https://img.shields.io/pypi/pyversions/jsonl-log.svg)](https://pypi.org/project/jsonl-log/)
+[![CI](https://github.com/ecoop/jsonl-log/actions/workflows/ci.yml/badge.svg)](https://github.com/ecoop/jsonl-log/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 An append-only [JSONL](https://jsonlines.org/) event log with ULID + UTC-ISO
 stamping and last-row-wins reads. One JSON object per line, appended and never
 rewritten — cheap to write, cheap to `grep`, safe to tail from another process.
+
+Optionally mirrors every append into an object store, so a log living on a
+container's ephemeral disk survives a restart — without paying a network
+round-trip on any read.
 
 Extracted from three codebases that had each reinvented the same shape:
 pitchcraft's persistence ledgers (`da_notes_log`, `decisions_ledger`,
 `downstream_constraints`) and rulebook's `interaction_log`. The source flagged
 its own duplication — this package is the consolidation.
 
-_Last updated: 2026-08-08_
+_Last updated: 2026-09-08_
 
 ---
 
@@ -19,7 +28,11 @@ _Last updated: 2026-08-08_
 pip install jsonl-log
 ```
 
-One runtime dependency: [`python-ulid`](https://pypi.org/project/python-ulid/).
+Requires Python 3.11+. One runtime dependency,
+[`python-ulid`](https://pypi.org/project/python-ulid/) (plus
+`typing-extensions` on 3.11, which `python-ulid` needs but doesn't declare).
+The durable-backend layer is an opt-in extra — see
+[Durable backends](#durable-backends-v02).
 
 ---
 
@@ -134,6 +147,12 @@ log.append({"qa_id": "q1", "rating": 5})   # writes local AND GCS
 rows = log.read_latest_list(key="qa_id", sort_desc="timestamp")
 ```
 
+| Option | Default | What it does |
+|---|---|---|
+| `durable_backend` | `None` | A `DurableBackend`. `None` is v0.1 behavior byte-for-byte. |
+| `durable_name` | `Path(path).name` | Object name at the backend, so `data/feedback.jsonl` stores as `feedback.jsonl`. |
+| `strict` | `False` | Raise `DurableBackendError` on a backend append failure instead of warning. |
+
 ### Three operating modes
 
 - **No backend** (`durable_backend=None`) — v0.1 behavior byte-for-byte. Local
@@ -141,19 +160,42 @@ rows = log.read_latest_list(key="qa_id", sort_desc="timestamp")
 - **Backend, reachable** — every append writes local first, then mirrors to
   the backend under the same lock. `hydrate()` at startup pulls the backend's
   view down into the local file, overwriting any diverged local content.
-- **Backend, unreachable at startup** — `hydrate()` will raise from the
-  backend call; the container should either fail fast or catch and continue
-  local-only. Subsequent appends retry the backend on every call.
+- **Backend, unreachable at startup** — `hydrate()` propagates the backend's
+  own exception (it is not wrapped in `DurableBackendError`); the container
+  should either fail fast or catch and continue local-only. Subsequent appends
+  retry the backend on every call.
+
+### How appends stay O(1)
+
+Naively, "append a row to an object store" means download the object, add a
+line, re-upload — O(N) per row, which degrades as the log grows. `GcsBackend`
+instead uploads the single new line to a temp object and asks GCS to
+[compose](https://cloud.google.com/storage/docs/composite-objects)
+`[target, temp] → target` server-side. The target grows by one row without its
+contents ever crossing the wire, which matches the cost model of the local
+append it mirrors.
+
+Composed objects carry a component count that GCS caps, so every
+`consolidate_every` appends (default 1000, counted per-process) the target is
+rewritten as a flat blob to reset it. That rewrite is O(N), but amortized over
+a thousand rows — a rare latency spike on the write path, not a per-row cost.
 
 ### `strict` and the silent-gap caveat
 
 By default (`strict=False`) a backend append failure is logged as a warning
 and the row remains on local disk only. On the next container restart,
 `hydrate()` pulls the backend-authoritative state and that missed row
-**disappears** from the container's view. This is intentional for HITL signal
-(thumbs, curation clicks) — losing one row on a GCS outage is preferable to
-failing the user's request. For audit-critical logs, pass `strict=True` and
-handle `DurableBackendError` yourself.
+**disappears** from the container's view — nothing back-fills it. This is
+intentional for HITL signal (thumbs, curation clicks): losing one row on a GCS
+outage is preferable to failing the user's request. For audit-critical logs,
+pass `strict=True` and handle `DurableBackendError` yourself.
+
+### Hydrate is startup-only
+
+`hydrate()` overwrites the local file from the backend, so calling it after
+rows have been appended in-process would silently discard them. It raises
+`RuntimeError` in that case; pass `force=True` if overwriting is genuinely what
+you want. Call it once, during single-threaded startup, before any appends.
 
 ### Adopting on a pre-existing log
 
@@ -166,8 +208,9 @@ backend has content.
 
 v0.2 assumes **one writer per (bucket, prefix, name) tuple**. Match your
 deployment shape (e.g. Cloud Run `--max-instances=1 --min-instances=0`).
-Multi-writer correctness is on the v0.3 roadmap; see the v0.2 design notes
-in `docs/v0.2-plan.md` for the candidates.
+Concurrent writers can race the first-append existence check and interleave
+composes. Multi-writer correctness is on the v0.3 roadmap; see the v0.2 design
+notes in [`docs/v0.2-plan.md`](docs/v0.2-plan.md) for the candidates.
 
 ### Custom backends
 
@@ -184,6 +227,22 @@ durable_backend=...)`.
 See [`docs/integration.md`](docs/integration.md) for the before/after mapping
 from each source implementation, including which parts of jobscout do (and don't)
 apply.
+
+---
+
+## Development
+
+```bash
+pip install -e ".[dev]"
+ruff check src tests
+pytest
+```
+
+65 tests, no network required — the GCS backend is exercised against a fake
+bucket, so the suite runs offline. Three integration tests hit real GCS and
+skip unless `GCS_TEST_BUCKET` is set. CI runs ruff + pytest on Python 3.11,
+3.12, and 3.13; releases publish to PyPI from a version tag via trusted
+publishing (OIDC, no API token).
 
 ---
 

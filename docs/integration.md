@@ -1,5 +1,7 @@
 # Integration Guide
 
+_Last updated: 2026-09-08_
+
 How to adopt `jsonl-log` in a Python application. The [README](../README.md)
 explains *what* the library does; this doc explains *how* to swap each existing
 hand-rolled log over to it.
@@ -16,8 +18,16 @@ literal before/after for each one.
 pip install jsonl-log
 ```
 
-One runtime dependency (`python-ulid`). No optional extras — the whole surface
-is in the base install.
+Requires Python 3.11+. One runtime dependency (`python-ulid`). The core
+append/read surface is in the base install; the optional durable-backend layer
+adds an extra:
+
+```bash
+pip install jsonl-log[gcs]   # adds google-cloud-storage
+```
+
+See the README's [durable backends](../README.md#durable-backends-v02) section
+for when you need it. The mappings below are all base-install.
 
 ---
 
