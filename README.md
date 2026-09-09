@@ -9,6 +9,20 @@ An append-only [JSONL](https://jsonlines.org/) event log with ULID + UTC-ISO
 stamping and last-row-wins reads. One JSON object per line, appended and never
 rewritten — cheap to write, cheap to `grep`, safe to tail from another process.
 
+```python
+from jsonl_log import JsonlLog
+
+log = JsonlLog("data/feedback.jsonl", stamp_id=True)
+
+log.append({"qa_id": "q1", "rating": 5})   # stamped with a ULID + UTC timestamp
+log.append({"qa_id": "q1", "rating": 4})   # a correction: appended, not overwritten
+
+log.read_latest("qa_id")                   # {"q1": {"rating": 4, ...}} — last write wins
+```
+
+Nothing is ever rewritten, so the file is a full audit trail and the current
+state at the same time.
+
 Optionally mirrors every append into an object store, so a log living on a
 container's ephemeral disk survives a restart — without paying a network
 round-trip on any read.
